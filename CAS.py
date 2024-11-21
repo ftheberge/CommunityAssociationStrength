@@ -89,78 +89,7 @@ def score_to_memberships(S, DegA, threshold, min_deg_in=2):
     M = (1*(DegA>=min_deg_in)).multiply(1*(S>=threshold))
     return M
 
-## compute new community membership matrix given vertex-community scores, using a "global" score function to estimate per-community thresholds.
-## also apply condition w.r.t. minimum community degree.
-## with default values, should function as a plug-in replacement to "score_to_memberships". WARNING: due to shape of input, that probably doesn't work right now, but presumably this is easy to fix.
-def rising_tide(A, S, M, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
-    '''
-    Input
-    -----
-    A: sparse (csr) adjacency matrix (n by n)
-    S: sparse (csr) score memberships to k comunities matrix (n by k)
-    DegA: sparse (csr) matrix with degree of each node of each original community (n by k)
-    M: sparse (csr) community membership to k comunities matrix (n by k)
-    global_incremental_scorer: a function that should take in a tuple of the form (A, M[:,i]) and optional extra data, then return a score and an auxiliary tuple.
-    global_req: a function that should take in a tuple of the form (A,M[:,i]) and optional extra data, then return a true/false value and an auxiliary tuple.
-    size_bias: a function that should take in a number and return another number. This is added as a bias towards larger/smaller communities. Optional.
-    min_deg_in: minimum community degree for membership
-    
-    Output
-    ------
-    M: sparse (csr) community membership to k comunities matrix (n by k)
-    '''    
-    res = np.zeros(M.shape)
-    for i in range(M.shape[1]):
-        temp = column_rising_tide(A, S[:,i], M[:,i], global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = size_bias, enforce_req = enforce_req, min_deg_in = 2).toarray()
-        res[:,i] = temp.reshape((temp.shape[0],))
-    return res
 
-def column_rising_tide(A, s, m, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
-    # Order the non-zero indices of s according to their values. 
-    s_inds = s.nonzero()[0]
-    s_vals = np.array([x[0] for x in s[s_inds,0].toarray()])
-    sigma = np.argsort(-s_vals)
-    sigma_inv = [x for x in range(len(sigma))]
-    for i in range(len(sigma)):
-        sigma_inv[sigma[i]] = i
-    
-    ordered_inds = np.array([s_inds[x] for x in sigma])
-
-    # Compute the scores and requirements, in order.
-    ordered_scores = []
-    curr_set = lil_matrix(m.shape)
-    curr_score_aux = None
-    curr_req_aux = None
-    for i in range(len(sigma)):
-        new_set = curr_set
-        new_set[ordered_inds[i],0] = 1
-        if i == 0:
-            curr_score, curr_score_aux = global_incremental_scorer(A, new_set.tocsr())
-            if enforce_req:
-                curr_req, curr_req_aux = global_req(A, new_set.tocsr())
-            else:
-                curr_req = True
-        else:
-            curr_score, curr_score_aux = global_incremental_scorer(A, new_set.tocsr(),old_set = curr_set.tocsr(), old_numerator = curr_score_aux[0],  old_denominator = curr_score_aux[1]) # TODO: This is a very restrictive way of passing extra arguments. Fix if/when we care.
-            if enforce_req:
-                curr_req, curr_req_aux = global_req(A, new_set.tocsr(),old_set = curr_set.tocsr(), old_UF = curr_req_aux)
-            else:
-                curr_req = True
-        if curr_req:
-            ordered_scores.append(curr_score)
-        else:
-            ordered_scores.append(-(i+1))
-        curr_set = new_set
-
-    # Find the index with the best score, subject to the requirement curr_req
-    ordered_scores = np.array(ordered_scores)
-    best_ind = np.argsort(-ordered_scores)[0]
-    best_set_inds = [s_inds[sigma_inv[j]] for j in range(best_ind)]
-    best_set_vec = lil_matrix(m.shape)
-    for i in best_set_inds:
-        best_set_vec[i,0] = 1.0
-    return best_set_vec
-    
 
 def incremental_conductance(A,new_set, old_set = None,old_numerator = None, old_denominator=None, eps = (0.01)**8):
     '''
@@ -279,3 +208,75 @@ def global_conn(A, new_set, old_set = None, old_UF = None):
             old_UF.merge(S)
         return old_UF.is_connected, old_UF
     return -1, -1
+
+def column_rising_tide(A, s, m, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
+    # Order the non-zero indices of s according to their values. 
+    s_inds = s.nonzero()[0]
+    s_vals = np.array([x[0] for x in s[s_inds,0].toarray()])
+    sigma = np.argsort(-s_vals)
+    sigma_inv = [x for x in range(len(sigma))]
+    for i in range(len(sigma)):
+        sigma_inv[sigma[i]] = i
+    
+    ordered_inds = np.array([s_inds[x] for x in sigma])
+
+    # Compute the scores and requirements, in order.
+    ordered_scores = []
+    curr_set = lil_matrix(m.shape)
+    curr_score_aux = None
+    curr_req_aux = None
+    for i in range(len(sigma)):
+        new_set = curr_set
+        new_set[ordered_inds[i],0] = 1
+        if i == 0:
+            curr_score, curr_score_aux = global_incremental_scorer(A, new_set.tocsr())
+            if enforce_req:
+                curr_req, curr_req_aux = global_req(A, new_set.tocsr())
+            else:
+                curr_req = True
+        else:
+            curr_score, curr_score_aux = global_incremental_scorer(A, new_set.tocsr(),old_set = curr_set.tocsr(), old_numerator = curr_score_aux[0],  old_denominator = curr_score_aux[1]) # TODO: This is a very restrictive way of passing extra arguments. Fix if/when we care.
+            if enforce_req:
+                curr_req, curr_req_aux = global_req(A, new_set.tocsr(),old_set = curr_set.tocsr(), old_UF = curr_req_aux)
+            else:
+                curr_req = True
+        if curr_req:
+            ordered_scores.append(curr_score)
+        else:
+            ordered_scores.append(-(i+1))
+        curr_set = new_set
+
+    # Find the index with the best score, subject to the requirement curr_req
+    ordered_scores = np.array(ordered_scores)
+    best_ind = np.argsort(-ordered_scores)[0]
+    best_set_inds = [s_inds[sigma_inv[j]] for j in range(best_ind)]
+    best_set_vec = lil_matrix(m.shape)
+    for i in best_set_inds:
+        best_set_vec[i,0] = 1.0
+    return best_set_vec
+        
+## compute new community membership matrix given vertex-community scores, using a "global" score function to estimate per-community thresholds.
+## also apply condition w.r.t. minimum community degree.
+## with default values, should function as a plug-in replacement to "score_to_memberships". WARNING: due to shape of input, that probably doesn't work right now, but presumably this is easy to fix.
+def rising_tide(A, S, M, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
+    '''
+    Input
+    -----
+    A: sparse (csr) adjacency matrix (n by n)
+    S: sparse (csr) score memberships to k comunities matrix (n by k)
+    DegA: sparse (csr) matrix with degree of each node of each original community (n by k)
+    M: sparse (csr) community membership to k comunities matrix (n by k)
+    global_incremental_scorer: a function that should take in a tuple of the form (A, M[:,i]) and optional extra data, then return a score and an auxiliary tuple.
+    global_req: a function that should take in a tuple of the form (A,M[:,i]) and optional extra data, then return a true/false value and an auxiliary tuple.
+    size_bias: a function that should take in a number and return another number. This is added as a bias towards larger/smaller communities. Optional.
+    min_deg_in: minimum community degree for membership
+    
+    Output
+    ------
+    M: sparse (csr) community membership to k comunities matrix (n by k)
+    '''    
+    res = np.zeros(M.shape)
+    for i in range(M.shape[1]):
+        temp = column_rising_tide(A, S[:,i], M[:,i], global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = size_bias, enforce_req = enforce_req, min_deg_in = 2).toarray()
+        res[:,i] = temp.reshape((temp.shape[0],))
+    return res
