@@ -34,11 +34,11 @@ def CAS(A, M, alpha=1):
     
     Output
     ------
-    IEF: sparse (csr) community score matrix (n by k), all values positive (internal edge fraction)
-    Beta: sparse (csr) community score matrix (n by k), all values positive (normalized IEF)
-    C: sparse (csr) community score matrix (n by k), all values positive (standard deviations based score given Beta)
-    Pv: sparse(csr) community score matrix (n by k), all values positive (1 minus p-values)
-    DegA: sparse (csr) matrix with degree of each node for each original community (n by k) 
+    IEF: sparse (csr) internal edge fraction by (n by k), all values positive.
+    Beta: sparse (csr) community score matrix (n by k), all values positive (normalized IEF).
+    C: sparse (csr) community score matrix (n by k), all values positive (stdv given beta)
+    S: sparse(csr) community score matrix (n by k), all values positive (normalized probabilities)
+    DegA: sparse (csr) matrix with degree of each node of each original community (n by k) 
     '''
     ## compute all deg_A(v)
     Degrees = np.array(A.sum(axis=1)).flatten()
