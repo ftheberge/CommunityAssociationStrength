@@ -34,10 +34,11 @@ def CAS(A, M, alpha=1):
     
     Output
     ------
+    IEF: sparse (csr) community score matrix (n by k), all values positive (internal edge fraction)
     Beta: sparse (csr) community score matrix (n by k), all values positive (normalized IEF)
-    C: sparse (csr) community score matrix (n by k), all values positive (stdv given beta)
-    P: sparse(csr) community score matrix (n by k), all values positive (1 minus p-values)
-    DegA: sparse (csr) matrix with degree of each node of each original community (n by k) 
+    C: sparse (csr) community score matrix (n by k), all values positive (standard deviations based score given Beta)
+    Pv: sparse(csr) community score matrix (n by k), all values positive (1 minus p-values)
+    DegA: sparse (csr) matrix with degree of each node for each original community (n by k) 
     '''
     ## compute all deg_A(v)
     Degrees = np.array(A.sum(axis=1)).flatten()
@@ -64,11 +65,11 @@ def CAS(A, M, alpha=1):
     N = DegA.shape[0]
     Ptr = DegA.indptr
     Nodes = np.repeat(np.arange(N), np.diff(DegA.indptr))
-    S = DegA.copy()
-    S.data = np.array([binom.cdf(k=DegA.data[i]-1, n=Degrees[Nodes[i]], p=pA[DegA.indices[i]]) for i in range(len(Nodes))])    
+    Pv = DegA.copy()
+    Pv.data = np.array([binom.cdf(k=DegA.data[i]-1, n=Degrees[Nodes[i]], p=pA[DegA.indices[i]]) for i in range(len(Nodes))])    
     ## Internal edge fraction
     IEF = DegInv*DegA
-    return IEF, Beta, C, S, DegA
+    return IEF, Beta, C, Pv, DegA
 
 ## compute new community membership matrix given scores and threshold
 ## also apply condition w.r.t. minimum community degree
@@ -76,14 +77,14 @@ def score_to_memberships(S, DegA, threshold, min_deg_in=2):
     '''
     Input
     -----
-    S: sparse (csr) score memberships to k comunities matrix (n by k)
+    S: sparse (csr) score, memberships to k comunities matrix (n by k)
     DegA: sparse (csr) matrix with degree of each node of each original community (n by k) 
     threshold: minimum "pass" score
     min_deg_in: minimum community degree for membership
     
     Output
     ------
-    M: sparse (csr) community membership to k comunities matrix (n by k)
+    M: sparse (csr) community membership matrix (n by k)
     '''    
     M = (1*(DegA>=min_deg_in)).multiply(1*(S>=threshold))
     return M
