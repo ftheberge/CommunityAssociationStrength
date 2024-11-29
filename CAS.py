@@ -22,6 +22,15 @@ def partition2sparse(partition):
                            shape=(n, max(partition)+1) )
     return X
 
+## from sparse membership matrix to dictionary of communities
+## required format for the omega index function
+def sparse2dict(M):
+    dct = dict()
+    T = M.transpose().tocsr()
+    for i in range(len(T.indptr)-1):
+        dct[i] = list(T.indices[T.indptr[i]:T.indptr[i+1]])
+    return dct
+
 ## A: Adjacency matrix (n by n, csr)
 ## M: sparse matrix of community memberships (n by k, csr)
 def CAS(A, M, alpha=1):
