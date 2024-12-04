@@ -80,6 +80,20 @@ def CAS(A, M, alpha=1):
     IEF = DegInv*DegA
     return IEF, Beta, C, S, DegA
 
+def two_adjusted_CAS(Beta,DegA,S,M,alpha=1):
+    """
+    A placeholder version of an idea we'd discussed: adjusting the CAS for "later" communities, so that a vertex can belong strongly to several communities.
+    The motivation here is that we currently choose a single threshold, and this discourages multi-community membership (indeed, it completely removes the possibility of belonging to a large number of communities).
+    This version simply removes the "best" community, which inflates beta_{2} by quite a lot. 
+    """
+    # find the "best" community for each vertex
+    BestComm = sparse.csr_matrix.argmax(Beta,axis=1)
+    # For each vertex v, adjust CAS by "removing" the best community S = argmax_{community} Beta_{community}(v) and re-computing.
+    for i in range(A.shape[0]):
+        A[i,:] = A[i,:] - M[:,BestComm[i]].transpose()
+
+    return CAS(A, M, alpha=alpha)
+
 ## compute new community membership matrix given scores and threshold
 ## also apply condition w.r.t. minimum community degree
 def score_to_memberships(S, DegA, threshold, min_deg_in=2):
@@ -98,6 +112,41 @@ def score_to_memberships(S, DegA, threshold, min_deg_in=2):
     M = (1*(DegA>=min_deg_in)).multiply(1*(S>=threshold))
     return M
 
+# Helper functions for sequential_score_to_memberships
+def uniform_weighter(n):
+    return np.array([1.0]*n)
+
+def log_thresher(n,b=0.4,m=1):
+    return np.array([b + m*np.log(j) for j in range(n)])
+
+def sequential_score_to_memberships(S, DegA, min_deg_in=2, weighter = uniform_weighter, weight_params = {}, thresher = log_thresher, thresh_params = {"b":0.4, "m":1}):
+    """
+    Placeholder function.
+    """
+    # TBD: Actually test this.
+    weights = weighter(S.shape[1], **weight_params)
+    threshes = thresher(S.shape[1], **thresh_params)
+    
+    # For each vertex, compute the ordered S-values, then the associated weighted partial-sum matrix PS. 
+    # TODO: Do this with faster, sparse operations!
+    OS = np.argsort(-S.toarray(),axis=1)
+    PS = np.zeros((OS.shape))
+    
+    for i in range(OS.shape[0]):
+        vals = [S[i,OS[i,0]]]
+        for j in range(1,OS.shape[1]):
+            vals.append(vals[j-1] + S[i,OS[i,j]])
+        PS[i,:] = np.array(vals)
+
+
+    # For each vertex, compute the number of entries of PS that beat the threshold.
+    n_coms = ((1*(PS > threshes)).sum(axis=1))
+
+    # Use this to compute the threshold value for each vertex
+    vertex_threshold = np.array([PS[x,n_coms[x]-1] for x in range(PS.shape[0])])
+    v = np.array((1*(DegA>=min_deg_in))).reshape(-1, 1)
+    M = v @ np.array((1*(S>=vertex_threshold)))
+    return M
 
 
 def incremental_conductance(A,new_set, old_set = None,old_numerator = None, old_denominator=None, eps = (0.01)**8):
@@ -218,9 +267,10 @@ def global_conn(A, new_set, old_set = None, old_UF = None):
         return old_UF.is_connected, old_UF
     return -1, -1
 
-def column_rising_tide(A, s, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
+def column_rising_tide(A, s, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2, slow_version = True):
+    # TBD: Obviously we don't want "slow_version" to be true by default - just for debugging!
     # Order the non-zero indices of s according to their values. 
-    # The parameter "size_bias" should be a function that takes in a (float: score, int: community-size) pair and returns a single (float: adjusted score).
+    # The parameter "size_bias" should be a function that takes in a (float: score, int: community-size, int: graph size) triple and returns a single (float: adjusted score).
     s_inds = s.nonzero()[0]
     s_vals = np.array([x[0] for x in s[s_inds,0].toarray()])
     sigma = np.argsort(-s_vals)
@@ -236,9 +286,9 @@ def column_rising_tide(A, s, global_incremental_scorer = incremental_conductance
     curr_score_aux = None
     curr_req_aux = None
     for i in range(len(sigma)):
-        new_set = curr_set
+        new_set = copy.deepcopy(curr_set)
         new_set[ordered_inds[i],0] = 1
-        if i == 0:
+        if (i == 0)|(slow_version):
             curr_score, curr_score_aux = global_incremental_scorer(A, new_set.tocsr())
             if enforce_req:
                 curr_req, curr_req_aux = global_req(A, new_set.tocsr())
@@ -254,14 +304,15 @@ def column_rising_tide(A, s, global_incremental_scorer = incremental_conductance
             ordered_scores.append(curr_score)
         else:
             ordered_scores.append(-(i+1))
-        curr_set = new_set
+        curr_set = copy.deepcopy(new_set)
 
     if size_bias is not None:
-        ordered_scores = [size_bias(ordered_scores[i],i) for i in range(len(ordered_scores))]
+        n = A.shape[0]
+        ordered_scores = [size_bias(ordered_scores[i],i,n) for i in range(len(ordered_scores))]
 
     # Find the index with the best score, subject to the requirement curr_req
     ordered_scores = np.array(ordered_scores)
-    best_ind = np.argsort(-ordered_scores)[0]
+    best_ind = np.argsort(ordered_scores)[0] # ZZX: took out a minus sign, was: sort(-ordered_scores)[0]
     best_set_inds = [s_inds[sigma_inv[j]] for j in range(best_ind)]
     best_set_vec = lil_array(s.shape)
     for i in best_set_inds:
