@@ -75,7 +75,7 @@ def CAS(A, M, alpha=1):
     Ptr = DegA.indptr
     Nodes = np.repeat(np.arange(N), np.diff(DegA.indptr))
     S = DegA.copy()
-    S.data = np.array([binom.cdf(k=DegA.data[i], n=Degrees[Nodes[i]], p=pA[DegA.indices[i]]) for i in range(len(Nodes))])    
+    S.data = np.array([binom.cdf(k=DegA.data[i]-1, n=Degrees[Nodes[i]], p=pA[DegA.indices[i]]) for i in range(len(Nodes))])  ## -1 or not to -1
     ## Internal edge fraction
     IEF = DegInv*DegA
     return IEF, Beta, C, S, DegA
