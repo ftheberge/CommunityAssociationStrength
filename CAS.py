@@ -1,5 +1,5 @@
 import scipy.sparse as sparse 
-from scipy.sparse import csr_matrix, lil_matrix
+from scipy.sparse import csr_matrix, lil_array
 import numpy as np
 from scipy.stats import binom
 
@@ -21,6 +21,15 @@ def partition2sparse(partition):
     X = sparse.csr_matrix( (np.repeat(1,n), (np.arange(n, dtype=int),partition)), 
                            shape=(n, max(partition)+1) )
     return X
+
+## from sparse membership matrix to dictionary of communities
+## required format for the omega index function
+def sparse2dict(M):
+    dct = dict()
+    T = M.transpose().tocsr()
+    for i in range(len(T.indptr)-1):
+        dct[i] = list(T.indices[T.indptr[i]:T.indptr[i+1]])
+    return dct
 
 ## A: Adjacency matrix (n by n, csr)
 ## M: sparse matrix of community memberships (n by k, csr)
@@ -66,10 +75,24 @@ def CAS(A, M, alpha=1):
     Ptr = DegA.indptr
     Nodes = np.repeat(np.arange(N), np.diff(DegA.indptr))
     S = DegA.copy()
-    S.data = np.array([binom.cdf(k=DegA.data[i]-1, n=Degrees[Nodes[i]], p=pA[DegA.indices[i]]) for i in range(len(Nodes))])    
+    S.data = np.array([binom.cdf(k=DegA.data[i]-1, n=Degrees[Nodes[i]], p=pA[DegA.indices[i]]) for i in range(len(Nodes))])  ## -1 or not to -1
     ## Internal edge fraction
     IEF = DegInv*DegA
     return IEF, Beta, C, S, DegA
+
+def two_adjusted_CAS(Beta,DegA,S,M,alpha=1):
+    """
+    A placeholder version of an idea we'd discussed: adjusting the CAS for "later" communities, so that a vertex can belong strongly to several communities.
+    The motivation here is that we currently choose a single threshold, and this discourages multi-community membership (indeed, it completely removes the possibility of belonging to a large number of communities).
+    This version simply removes the "best" community, which inflates beta_{2} by quite a lot. 
+    """
+    # find the "best" community for each vertex
+    BestComm = sparse.csr_matrix.argmax(Beta,axis=1)
+    # For each vertex v, adjust CAS by "removing" the best community S = argmax_{community} Beta_{community}(v) and re-computing.
+    for i in range(A.shape[0]):
+        A[i,:] = A[i,:] - M[:,BestComm[i]].transpose()
+
+    return CAS(A, M, alpha=alpha)
 
 ## compute new community membership matrix given scores and threshold
 ## also apply condition w.r.t. minimum community degree
@@ -89,6 +112,41 @@ def score_to_memberships(S, DegA, threshold, min_deg_in=2):
     M = (1*(DegA>=min_deg_in)).multiply(1*(S>=threshold))
     return M
 
+# Helper functions for sequential_score_to_memberships
+def uniform_weighter(n):
+    return np.array([1.0]*n)
+
+def log_thresher(n,b=0.4,m=1):
+    return np.array([b + m*np.log(j) for j in range(n)])
+
+def sequential_score_to_memberships(S, DegA, min_deg_in=2, weighter = uniform_weighter, weight_params = {}, thresher = log_thresher, thresh_params = {"b":0.4, "m":1}):
+    """
+    Placeholder function.
+    """
+    # TBD: Actually test this.
+    weights = weighter(S.shape[1], **weight_params)
+    threshes = thresher(S.shape[1], **thresh_params)
+    
+    # For each vertex, compute the ordered S-values, then the associated weighted partial-sum matrix PS. 
+    # TODO: Do this with faster, sparse operations!
+    OS = np.argsort(-S.toarray(),axis=1)
+    PS = np.zeros((OS.shape))
+    
+    for i in range(OS.shape[0]):
+        vals = [S[i,OS[i,0]]]
+        for j in range(1,OS.shape[1]):
+            vals.append(vals[j-1] + S[i,OS[i,j]])
+        PS[i,:] = np.array(vals)
+
+
+    # For each vertex, compute the number of entries of PS that beat the threshold.
+    n_coms = ((1*(PS > threshes)).sum(axis=1))
+
+    # Use this to compute the threshold value for each vertex
+    vertex_threshold = np.array([PS[x,n_coms[x]-1] for x in range(PS.shape[0])])
+    v = np.array((1*(DegA>=min_deg_in))).reshape(-1, 1)
+    M = v @ np.array((1*(S>=vertex_threshold)))
+    return M
 
 
 def incremental_conductance(A,new_set, old_set = None,old_numerator = None, old_denominator=None, eps = (0.01)**8):
@@ -209,8 +267,10 @@ def global_conn(A, new_set, old_set = None, old_UF = None):
         return old_UF.is_connected, old_UF
     return -1, -1
 
-def column_rising_tide(A, s, m, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
+def column_rising_tide(A, s, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2, slow_version = True):
+    # TBD: Obviously we don't want "slow_version" to be true by default - just for debugging!
     # Order the non-zero indices of s according to their values. 
+    # The parameter "size_bias" should be a function that takes in a (float: score, int: community-size, int: graph size) triple and returns a single (float: adjusted score).
     s_inds = s.nonzero()[0]
     s_vals = np.array([x[0] for x in s[s_inds,0].toarray()])
     sigma = np.argsort(-s_vals)
@@ -222,13 +282,13 @@ def column_rising_tide(A, s, m, global_incremental_scorer = incremental_conducta
 
     # Compute the scores and requirements, in order.
     ordered_scores = []
-    curr_set = lil_matrix(m.shape)
+    curr_set = lil_array(s.shape)
     curr_score_aux = None
     curr_req_aux = None
     for i in range(len(sigma)):
-        new_set = curr_set
+        new_set = copy.deepcopy(curr_set)
         new_set[ordered_inds[i],0] = 1
-        if i == 0:
+        if (i == 0)|(slow_version):
             curr_score, curr_score_aux = global_incremental_scorer(A, new_set.tocsr())
             if enforce_req:
                 curr_req, curr_req_aux = global_req(A, new_set.tocsr())
@@ -244,13 +304,17 @@ def column_rising_tide(A, s, m, global_incremental_scorer = incremental_conducta
             ordered_scores.append(curr_score)
         else:
             ordered_scores.append(-(i+1))
-        curr_set = new_set
+        curr_set = copy.deepcopy(new_set)
+
+    if size_bias is not None:
+        n = A.shape[0]
+        ordered_scores = [size_bias(ordered_scores[i],i,n) for i in range(len(ordered_scores))]
 
     # Find the index with the best score, subject to the requirement curr_req
     ordered_scores = np.array(ordered_scores)
-    best_ind = np.argsort(-ordered_scores)[0]
+    best_ind = np.argsort(ordered_scores)[0] # ZZX: took out a minus sign, was: sort(-ordered_scores)[0]
     best_set_inds = [s_inds[sigma_inv[j]] for j in range(best_ind)]
-    best_set_vec = lil_matrix(m.shape)
+    best_set_vec = lil_array(s.shape)
     for i in best_set_inds:
         best_set_vec[i,0] = 1.0
     return best_set_vec
@@ -258,14 +322,12 @@ def column_rising_tide(A, s, m, global_incremental_scorer = incremental_conducta
 ## compute new community membership matrix given vertex-community scores, using a "global" score function to estimate per-community thresholds.
 ## also apply condition w.r.t. minimum community degree.
 ## with default values, should function as a plug-in replacement to "score_to_memberships". WARNING: due to shape of input, that probably doesn't work right now, but presumably this is easy to fix.
-def rising_tide(A, S, M, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
+def rising_tide(A, S, global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = None, enforce_req = False, min_deg_in = 2):
     '''
     Input
     -----
     A: sparse (csr) adjacency matrix (n by n)
     S: sparse (csr) score memberships to k comunities matrix (n by k)
-    DegA: sparse (csr) matrix with degree of each node of each original community (n by k)
-    M: sparse (csr) community membership to k comunities matrix (n by k)
     global_incremental_scorer: a function that should take in a tuple of the form (A, M[:,i]) and optional extra data, then return a score and an auxiliary tuple.
     global_req: a function that should take in a tuple of the form (A,M[:,i]) and optional extra data, then return a true/false value and an auxiliary tuple.
     size_bias: a function that should take in a number and return another number. This is added as a bias towards larger/smaller communities. Optional.
@@ -275,8 +337,8 @@ def rising_tide(A, S, M, global_incremental_scorer = incremental_conductance, gl
     ------
     M: sparse (csr) community membership to k comunities matrix (n by k)
     '''    
-    res = np.zeros(M.shape)
-    for i in range(M.shape[1]):
-        temp = column_rising_tide(A, S[:,i], M[:,i], global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = size_bias, enforce_req = enforce_req, min_deg_in = 2).toarray()
-        res[:,i] = temp.reshape((temp.shape[0],))
+    res = lil_array(S.shape)
+    for i in range(S.shape[1]):
+        res[:,i] = column_rising_tide(A, S[:,i], global_incremental_scorer = incremental_conductance, global_req = global_conn, size_bias = size_bias, enforce_req = enforce_req, min_deg_in = 2).toarray()
+    res = csr_matrix(res, dtype=int)
     return res
