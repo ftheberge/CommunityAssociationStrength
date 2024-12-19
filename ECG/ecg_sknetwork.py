@@ -11,7 +11,7 @@ import CAS
 # Need to manually shuffle
 # Not confident we are keeping track correctly
 
-# sknetwork clustering functions seem to always be similar, falling into similar small clusterings each time
+# sknetwork clustering results seem to always be similar, falling into similar small clusterings each time
 
 
 def compute_edge_weights(G, cas, clusters, combine_function="min", normalize=True, eps=1e-06):
