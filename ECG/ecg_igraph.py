@@ -46,7 +46,7 @@ def cas_edge_weights(G, clusters, combine_function="min", normalize=True):
     return ief_weights, beta_weights, c_weights, p_weights, ecg_weights
 
 
-def ensemble_cas_edge_weights(G, ens_size=16, combine_function="min", normalize=True, clustering_method="first_louvain", resolution=0.1):
+def ensemble_cas_edge_weights(G, ens_size=16, combine_function="min", normalize=True, clustering_method="first_louvain", resolution=1.0):
     ief_weights = np.zeros(G.ecount())
     beta_weights = np.zeros(G.ecount())
     c_weights = np.zeros(G.ecount())
@@ -155,18 +155,19 @@ def attatchment_scores(G, edge_weights, clustering, eps=1e-6):
     return overall, community
 
 
-def prune_recursive(g, edge_weights, coms, thresh, score="beta", max_per_round=500, eps=1e-10):
-    # Prune recursively. The graph is not reclusters, and the CAS scores are computed with edge weights of 1, not those passed.
+def prune(g, edge_weights, coms, thresh, score="beta", max_per_round=500, recursive=True, eps=1e-6):
+    # Prune recursively. The graph is not reclustered, and the CAS scores are computed with edge weights of the original graph.
     n = g.vcount()
-    #adj = g.get_adjacency_sparse()
+
+    # Make sparse matrix versions of weighted graph and unweighted graph for CAS scores.
     pruned = np.zeros(n, dtype="bool")
     adj = sp.dok_matrix((n, n), dtype="int32")
     sn_edgeweights = sp.dok_matrix((n, n))
-    for i, e in enumerate(g.es):
+    for e, w in zip(g.es, edge_weights):
         adj[e.source, e.target] = 1
         adj[e.target, e.source] = 1
-        sn_edgeweights[e.source, e.target] = edge_weights[i] + eps  # in case edge_weight is 0 sparse matrix missing edges
-        sn_edgeweights[e.target, e.source] = edge_weights[i] + eps
+        sn_edgeweights[e.source, e.target] = w + eps  # in case edge_weight is 0 sparse matrix missing edges
+        sn_edgeweights[e.target, e.source] = w + eps
     adj = adj.tocsr()
     sn_edgeweights = sn_edgeweights.tocsr()
 
@@ -216,6 +217,8 @@ def prune_recursive(g, edge_weights, coms, thresh, score="beta", max_per_round=5
             # nothing to prune
             done = True
         
+        if not recursive:
+            done = True
         round_counter += 1
         #print(f"{np.sum(pruned)} nodes pruned after round {round_counter}")
     return pruned
