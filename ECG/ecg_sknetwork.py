@@ -1,33 +1,68 @@
 import numpy as np
 import sknetwork as sn
 import scipy.sparse as sp
+from numba_stats import binom
+from numba import jit
 
 import sys
 sys.path.append('../')
 import CAS
 
 
-# Setting shuffle_nodes = True does not work
-# Need to manually shuffle
-# Not confident we are keeping track correctly
+@jit
+def ief_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols):
+    neighbors = indices[indptr[node]:indptr[node+1]]
+    deg = len(neighbors)
+    in_com_deg = np.sum(clusters[neighbors] == target_cluster)
+    ief = in_com_deg/deg
+    return ief
 
-# sknetwork clustering results seem to always be similar, falling into similar small clusterings each time
+
+@jit
+def nief_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols):
+    nief = np.maximum(ief_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols) - cluster_vols[target_cluster], 0.0)
+    return nief
 
 
-def compute_edge_weights(G, cas, clusters, combine_function="min", normalize=True, eps=1e-06):
-    source_to_target = np.empty(len(G.data))
-    target_to_source = np.empty(len(G.data))
+@jit
+def p_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols):
+    neighbors = indices[indptr[node]:indptr[node+1]]
+    deg = np.array([len(neighbors)], dtype="int64")
+    in_com_deg = np.array([np.sum(clusters[neighbors] == target_cluster) - 1], dtype="float64")
+    p = binom._cdf(in_com_deg, deg, cluster_vols[target_cluster])[0]
+    return p
+
+
+@jit
+def ecg_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols):
+    return int(clusters[node] == target_cluster)
+
+
+@jit
+def get_cluster_vols(indptr, clusters):
+    cluster_vols = np.zeros(np.max(clusters)+1, dtype="int32")
+    degrees = np.array([indptr[i+1]-indptr[i] for i in range(len(indptr)-1)])
+    for c, deg in zip(clusters, degrees):
+        cluster_vols[c] += deg
+    return cluster_vols / indptr[-1]  # indptr[-1] is the total volume of the graph
+
+
+@jit
+def compute_edge_weights(indptr, indices, cas_function, clusters, combine_function="and", normalize=True, eps=1e-06):
+    source_to_target = np.empty(len(indices), dtype="float64")
+    target_to_source = np.empty(len(indices), dtype="float64")
+    cluster_vols = get_cluster_vols(indptr, clusters)
     i = 0
-    for source in range(len(G.indptr)-1):
-        for target in G.indices[source:source+1]:
-            source_to_target[i] = cas[source, clusters[target]]
-            target_to_source[i] = cas[target, clusters[source]]
+    for source in range(len(indptr)-1):
+        for target in indices[indptr[source]:indptr[source+1]]:
+            source_to_target[i] = cas_function(indptr, indices, clusters, source, clusters[target], cluster_vols)
+            target_to_source[i] = cas_function(indptr, indices, clusters, target, clusters[source], cluster_vols)
             i += 1
 
     if combine_function=="and":
         weights = source_to_target * target_to_source
     elif combine_function=="or":
-        weights = source_to_target + target_to_source - source_to_target*target_to_source
+        weights = source_to_target + target_to_source - source_to_target * target_to_source
     if combine_function=="min":
         weights = np.minimum(source_to_target, target_to_source)
     elif combine_function=="mean":
@@ -36,33 +71,17 @@ def compute_edge_weights(G, cas, clusters, combine_function="min", normalize=Tru
         raise ValueError(f"combine_function must be one of 'and', 'or', 'min', 'mean'. Got {combine_function}")
     
     if normalize:
-        return weights / (np.max(weights) - np.min(weights))
+        return weights / (np.max(weights) - np.min(weights) + eps)
     return weights
 
 
-def cas_edge_weights(G, clusters, combine_function="min", normalize=True):
-    ief, beta, c, p, degs = CAS.CAS(G, CAS.partition2sparse(clusters))
-
-    ief_weights = compute_edge_weights(G, ief, clusters, combine_function=combine_function, normalize=normalize)
-    beta_weights = compute_edge_weights(G, beta, clusters, combine_function=combine_function, normalize=normalize)
-    c_weights = compute_edge_weights(G, c, clusters, combine_function=combine_function, normalize=normalize)
-    p_weights = compute_edge_weights(G, p, clusters, combine_function=combine_function, normalize=normalize)
-    ecg_weights = compute_edge_weights(G, CAS.partition2sparse(clusters), clusters, combine_function=combine_function, normalize=False)
-    
-    return ief_weights, beta_weights, c_weights, p_weights, ecg_weights
-
-
-def ensemble_cas_edge_weights(G, ens_size=16, combine_function="min", normalize=True, clustering_method="first_louvain", resolution=1.0):
-    ief_weights = np.zeros(len(G.data))
-    beta_weights = np.zeros(len(G.data))
-    c_weights = np.zeros(len(G.data))
-    p_weights = np.zeros(len(G.data))
-    ecg_weights = np.zeros(len(G.data))
+def ensemble_cas_edge_weights(G, cas_function=p_to_cluster, ens_size=16, combine_function="min", normalize=True, clustering_method="first_louvain", resolution=1.0):
+    weights = np.zeros(len(G.data))
 
     if clustering_method == "leiden":
         method = sn.clustering.Leiden(resolution=resolution, shuffle_nodes=True)
     elif clustering_method == "first_leiden":
-        method = sn.clustering.Louvain(resolution=resolution, n_aggregations=1, shuffle_nodes=True)
+        method = sn.clustering.Leiden(resolution=resolution, n_aggregations=1, shuffle_nodes=True)
     elif clustering_method == "louvain":
         method = sn.clustering.Louvain(resolution=resolution, shuffle_nodes=True)
     elif clustering_method == "first_louvain":
@@ -71,23 +90,10 @@ def ensemble_cas_edge_weights(G, ens_size=16, combine_function="min", normalize=
         raise ValueError(f"clustering_method expected one of leiden, louvain, or first_louvain. Got {clustering_method}")
 
     for _ in range(ens_size):
-        permutation = np.random.permutation(G.shape[0])
-        temp = G[permutation][:, permutation]
-        temp_clustering = method.fit_predict(temp)
+        clustering = method.fit_predict(G)
+        weights += compute_edge_weights(G.indptr, G.indices, cas_function, clustering, combine_function=combine_function, normalize=normalize)
 
-        inverse_permutation = np.empty_like(permutation)
-        inverse_permutation[permutation] = np.arange(len(permutation))
-        clustering = temp_clustering[inverse_permutation]
-
-        ief, beta, c, p, ecg = cas_edge_weights(G, clustering, combine_function=combine_function, normalize=normalize)
-
-        ief_weights += ief
-        beta_weights += beta
-        c_weights += c
-        p_weights += p
-        ecg_weights += ecg
-
-    return ief_weights/ens_size, beta_weights/ens_size, c_weights/ens_size, p_weights/ens_size, ecg_weights/ens_size
+    return weights/ens_size
 
 
 def cluster_edges(G, edge_weights, min_weight=0.05, twocore=True, final="leiden", resolution=1.0):
