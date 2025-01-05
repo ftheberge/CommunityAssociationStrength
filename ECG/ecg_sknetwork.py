@@ -10,6 +10,17 @@ import CAS
 
 
 @jit
+def is_internal_edge(indptr, indices, clusters):
+    is_internal = np.zeros(indptr[-1], dtype="bool")
+    i = 0
+    for source in range(len(indptr)-1):
+        for target in indices[indptr[source]:indptr[source+1]]:
+            is_internal[i] = clusters[source] == clusters[target]
+            i += 1
+    return is_internal
+
+
+@jit
 def ief_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols):
     neighbors = indices[indptr[node]:indptr[node+1]]
     deg = len(neighbors)
@@ -49,34 +60,33 @@ def get_cluster_vols(indptr, clusters):
 
 @jit
 def compute_edge_weights(indptr, indices, cas_function, clusters, combine_function="and", normalize=True, eps=1e-06):
-    source_to_target = np.empty(len(indices), dtype="float64")
-    target_to_source = np.empty(len(indices), dtype="float64")
+    weights = np.empty(len(indices), dtype="float64")
     cluster_vols = get_cluster_vols(indptr, clusters)
     i = 0
     for source in range(len(indptr)-1):
         for target in indices[indptr[source]:indptr[source+1]]:
-            source_to_target[i] = cas_function(indptr, indices, clusters, source, clusters[target], cluster_vols)
-            target_to_source[i] = cas_function(indptr, indices, clusters, target, clusters[source], cluster_vols)
+            source_to_target = cas_function(indptr, indices, clusters, source, clusters[target], cluster_vols)
+            target_to_source = cas_function(indptr, indices, clusters, target, clusters[source], cluster_vols)
+            if combine_function=="and":
+                weights[i] = source_to_target * target_to_source
+            elif combine_function=="or":
+                weights[i] = source_to_target + target_to_source - source_to_target * target_to_source
+            elif combine_function=="min":
+                weights[i] = np.minimum(source_to_target, target_to_source)
+            elif combine_function=="mean":
+                weights[i] = (source_to_target + target_to_source)/2
             i += 1
-
-    if combine_function=="and":
-        weights = source_to_target * target_to_source
-    elif combine_function=="or":
-        weights = source_to_target + target_to_source - source_to_target * target_to_source
-    if combine_function=="min":
-        weights = np.minimum(source_to_target, target_to_source)
-    elif combine_function=="mean":
-        weights = (source_to_target + target_to_source)/2
-    else:
-        raise ValueError(f"combine_function must be one of 'and', 'or', 'min', 'mean'. Got {combine_function}")
     
     if normalize:
         return weights / (np.max(weights) - np.min(weights) + eps)
     return weights
 
 
-def ensemble_cas_edge_weights(G, cas_function=p_to_cluster, ens_size=16, combine_function="min", normalize=True, clustering_method="first_louvain", resolution=1.0):
+def ensemble_cas_edge_weights(G, cas_function=p_to_cluster, ens_size=16, combine_function="and", normalize=True, clustering_method="first_louvain", resolution=1.0):
     weights = np.zeros(len(G.data))
+
+    if combine_function not in ["and", "or", "min", "mean"]:
+        raise ValueError(f"combine_function expected one of and, or, min or mean. Got {combine_function}")
 
     if clustering_method == "leiden":
         method = sn.clustering.Leiden(resolution=resolution, shuffle_nodes=True)
