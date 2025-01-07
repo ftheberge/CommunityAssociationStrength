@@ -161,11 +161,11 @@ def get_scores(indptr, indices, edge_weights, clusters, score):
     elif score == "nief":
         cluster_vols = get_cluster_vols(indptr, clusters)
         for i in range(len(scores)):
-            scores[i] = ief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
+            scores[i] = nief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
     elif score == "p":
         cluster_vols = get_cluster_vols(indptr, clusters)
         for i in range(len(scores)):
-            scores[i] = ief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
+            scores[i] = p_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
 
     elif score in ["oout", "cout"]:
         oout, cout = attatchment_scores(indptr, indices, edge_weights, clusters)
