@@ -26,11 +26,11 @@ def is_internal_edge(indptr, indices, clusters):
 
 
 @jit
-def ief_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols, eps=1e-6):
+def ief_to_cluster(indptr, indices, clusters, node, target_cluster, cluster_vols):
     neighbors = indices[indptr[node]:indptr[node+1]]
     deg = len(neighbors)
     in_com_deg = np.sum(clusters[neighbors] == target_cluster)
-    ief = in_com_deg/(deg + eps)
+    ief = in_com_deg/(deg + EPS)
     return ief
 
 
@@ -169,22 +169,18 @@ def outlier_scores(G, edge_weights, clustering):
     return overall, community
 
 
-########################
-# Recursively pruneing #
-########################
-
-def get_com_score(scores, com):
-    return np.array([scores[i, com[i]] for i in range(len(com))])
-
-
-def attatchment_scores(G, edge_weights, clustering, eps=1e-6):
+#######################################
+# Outlier scores and pruning methods #
+######################################
+@jit
+def attatchment_scores(indptr, indices, edge_weights, clustering, eps=1e-6):
     # 1 - outlier scores from ECG. So that low attatchment are likely outliers to match with CAS scores.
-    degs = sn.utils.get_degrees(G)
+    degs = np.array([indptr[i+1]-indptr[i] for i in range(len(indptr)-1)])
     good = np.zeros(len(degs))
     bad = np.zeros(len(degs))
     i = 0
-    for source in range(len(G.indptr)-1):
-        for target in G.indices[G.indptr[source]:G.indptr[source+1]]:
+    for source in range(len(indptr)-1):
+        for target in indices[indptr[source]:indptr[source+1]]:
             if clustering[source] == clustering[target]:
                 good[source] += edge_weights[i]
             else:
@@ -196,68 +192,69 @@ def attatchment_scores(G, edge_weights, clustering, eps=1e-6):
     return overall, community
 
 
-def prune(g, edge_weights, coms, thresh, score="beta", max_per_round=500, recursive=True, eps=1e-6):
-    # Prune recursively. The graph is not reclustered, and the CAS scores are computed with edge weights of the original graph.
-    n = g.vcount()
+@jit
+def get_scores(indptr, indices, edge_weights, clusters, score):
+    scores = np.empty(len(indptr)-1, dtype="float64")
+    if score == "ief":
+        cluster_vols = get_cluster_vols(indptr, clusters)
+        for i in range(len(scores)):
+            scores[i] = ief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
+    elif score == "nief":
+        cluster_vols = get_cluster_vols(indptr, clusters)
+        for i in range(len(scores)):
+            scores[i] = nief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
+    elif score == "p":
+        cluster_vols = get_cluster_vols(indptr, clusters)
+        for i in range(len(scores)):
+            scores[i] = p_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
 
-    # Make sparse matrix versions of weighted graph and unweighted graph for CAS scores.
+    elif score in ["oout", "cout"]:
+        oout, cout = attatchment_scores(indptr, indices, edge_weights, clusters)
+        if score == "oout":
+            scores = oout
+        elif score == "cout":
+            scores = cout
+    return scores
+
+
+def prune(g, clusters, thresh, score="cout", max_per_round=100, recursive=True, edge_weights=None):
+    if score not in ["ief", "nief", "p", "oout", "cout"]:
+        raise ValueError(f"expected score to be one of: ief, nief, p, oout, cout. Got {score}.")
+
+    n = g.vcount()
     pruned = np.zeros(n, dtype="bool")
-    adj = sp.dok_matrix((n, n), dtype="int32")
-    sn_edgeweights = sp.dok_matrix((n, n))
-    for e, w in zip(g.es, edge_weights):
-        adj[e.source, e.target] = 1
-        adj[e.target, e.source] = 1
-        sn_edgeweights[e.source, e.target] = w + eps  # in case edge_weight is 0 sparse matrix missing edges
-        sn_edgeweights[e.target, e.source] = w + eps
-    adj = adj.tocsr()
-    sn_edgeweights = sn_edgeweights.tocsr()
+    ids = np.arange(n)
+
+    if score in ["ief", "nief", "p"]:
+        adj = g.get_adjacency_sparse()
+    if score in ["oout", "cout"] and edge_weights is not None:
+        g.es["w"] = edge_weights
+        adj = g.get_adjacency_sparse(attribute="w")
+    elif score in ["oout", "cout"]:
+        raise ValueError(f"edge_weights must be passed for score {score}")
 
     done = False
     round_counter = 1
     while not done:
         # Remove pruned nodes to make subgraph
-        index_map = np.arange(n)[~pruned]
+        index_map = ids[~pruned]
         subadj = adj[~pruned][:, ~pruned]
-        subedgeweights = sn_edgeweights[~pruned][:, ~pruned]
-        subcoms = coms[~pruned]
+        subclusters = clusters[~pruned]
 
-        # get score
-        if score in ["ief", "beta", "c", "p"]:
-            ief, beta, c, p, degs = CAS.CAS(subadj, CAS.partition2sparse(subcoms))
-            if score == "ief":
-                s = get_com_score(ief, subcoms)
-            elif score == "beta":
-                s = get_com_score(beta, subcoms)
-            elif score == "c":
-                s = get_com_score(c, subcoms)
-            elif score == "p":
-                s = get_com_score(p, subcoms)
-        elif score in ["oout", "cout"]:
-            oout, cout = attatchment_scores(subadj, subedgeweights.data, subcoms)
-            if score == "oout":
-                s = oout
-            elif score == "cout":
-                s = cout
-        else:
-            raise ValueError(f"expected score to be one of: ief, beta, c, p, oout, cout. Got {score}.")
-        
+        scores = get_scores(subadj.indptr, subadj.indices, subadj.data, subclusters, score)
         # prune below thresh
-        argsort = np.argsort(s)
-        if len(s) > max_per_round and s[argsort[max_per_round]] < thresh:
+        argsort = np.argsort(scores)
+        if len(scores) > max_per_round and scores[argsort[max_per_round]] < thresh:
             #prune max
             to_prune = argsort[:max_per_round]
             pruned[index_map[to_prune]] = True
-        elif len(s) > 1 and s[argsort[0]] < thresh:
+        elif len(scores) > 1 and scores[argsort[0]] < thresh:
             # prune some
-            for i in argsort:
-                if s[i] < thresh:
-                    pruned[index_map[i]] = True
-                else:
-                    break
+            pruned[index_map[argsort[scores[argsort] < thresh]]] = True  # TODO ew
         else:
             # nothing to prune
             done = True
-        
+    
         if not recursive:
             done = True
         round_counter += 1
