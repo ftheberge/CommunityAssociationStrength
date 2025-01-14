@@ -107,6 +107,23 @@ def add_weights(weights, edge_data_ids, data, combine):
 
 
 def ensemble_edge_weights(g: ig.Graph, ens_size=16, cas=p_to_cluster, combine="and", method="first_louvain", resolution=1.0):
+    '''
+    Input
+    -----
+    g: igraph.Graph object
+    
+    Optional
+    --------
+    ens_size: Number of clusterings to run in for the ensemble
+    cas: Function to compute the association of a vertex to a community. Provided options are ief_to_cluster, nief_to_cluster, p_to_cluster, ecg_to_cluster.
+    combine: Method to combine cas scores to create an edge weight. Options are 'and', 'or', 'min', 'mean'.
+    method: Method to find a clustering during each run. Options are 'louvian', 'first_louvian', 'leiden', 'first_leiden'.
+    resoltuion: Float that determines the resolution passed to the clustering method.
+
+    Output
+    ------
+    weights: 1d numpy array of edge weights in the same order as g.es
+    '''
     if combine not in ["and", "or", "min", "mean"]:
         raise ValueError(f"combine_function expected one of and, or, min or mean. Got {combine}")
     if method not in ["louvain", "first_louvain", "leiden", "first_leiden"]:
@@ -135,38 +152,38 @@ def ensemble_edge_weights(g: ig.Graph, ens_size=16, cas=p_to_cluster, combine="a
     return weights/ens_size
 
 
-def cluster_edges(G, edge_weights, min_weight=0.05, twocore=True, final="leiden", resolution=1.0):
+def cluster_edges(g, edge_weights, min_weight=0.05, twocore=True, final="leiden", resolution=1.0):
+    '''
+    Input
+    -----
+    g: igraph.Graph object
+    edge_weights: Numpy array of edge weights for the graph to cluster.
+
+    Optional
+    --------
+    min_weight: minimum weight for edges in the grap to cluster
+    twocore: Option to set all edges outside the two core to min_weight
+    final: Clustering method. Options are 'leiden' or 'louvain'.
+    resolution: Float to pass to the clustering method.
+    
+    Output
+    ------
+    igraph.VertexClustering: Clustering found by the method. Membership values are available via VertexClustering.membership.
+    '''
     if min_weight > 0:
         edge_weights = (1-min_weight) * edge_weights + min_weight
     
     if twocore:
-        core = G.shell_index()
-        ecore = np.array([min(core[e.source],core[e.target]) for e in G.es])
+        core = g.shell_index()
+        ecore = np.array([min(core[e.source],core[e.target]) for e in g.es])
         edge_weights[ecore == 1] = min_weight
 
     if final == "leiden":
-        return G.community_leiden(weights=edge_weights, objective_function='modularity', resolution=resolution)
+        return g.community_leiden(weights=edge_weights, objective_function='modularity', resolution=resolution)
     elif final == "louvain":
-        return G.community_multilevel(weights=edge_weights)
+        return g.community_multilevel(weights=edge_weights)
     else:
         raise ValueError(f"final expected one of leiden or louvain. Got {final}")
-
-
-def outlier_scores(G, edge_weights, clustering):
-    degs = np.array(G.degree())
-    good = np.zeros(G.vcount())
-    bad = np.zeros(G.vcount())
-    for i, e in enumerate(G.es):
-        if clustering[e.source] == clustering[e.target]:
-            good[e.source] += edge_weights[i]
-            good[e.target] += edge_weights[i]
-        else:
-            bad[e.source] += edge_weights[i]
-            bad[e.target] += edge_weights[i]       
-
-    overall = (degs - bad - good)/degs
-    community = bad/(bad + good)
-    return overall, community
 
 
 #######################################
@@ -218,6 +235,24 @@ def get_scores(indptr, indices, edge_weights, clusters, score):
 
 
 def prune(g, clusters, thresh, score="cout", max_per_round=100, recursive=True, edge_weights=None):
+    '''
+    Input
+    -----
+    g: igraph.Graph object.
+    clusters: numpy array of cluster memberships.
+    thresh: Threshold in (0, 1) to prune to.
+
+    Optional
+    --------
+    score: Method for scoring outlierness. Options are 'ief', 'nief', 'p', 'cout', 'oout'.
+    max_per_round: Maximum number of vertices that can be pruned before recomputing scores.
+    recursive: Prune rounds until all remaining scores are above the threshold.
+    edge_weights: Required for cout and oout to calculate scores.
+    
+    Output
+    ------
+    pruned: Boolean numpy array with True if the vertex is classified as an outlier. The ordering is the same as g.vs.
+    '''
     if score not in ["ief", "nief", "p", "oout", "cout"]:
         raise ValueError(f"expected score to be one of: ief, nief, p, oout, cout. Got {score}.")
 
