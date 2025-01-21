@@ -212,19 +212,23 @@ def attatchment_scores(indptr, indices, edge_weights, clustering, eps=1e-6):
 @jit
 def get_scores(indptr, indices, edge_weights, clusters, score):
     scores = np.empty(len(indptr)-1, dtype="float64")
-    if score == "ief":
+    if score in ["ief", "nief", "p"]:
         cluster_vols = get_cluster_vols(indptr, clusters)
+        if score == "ief":
+            cas = ief_to_cluster
+        elif score == "nief":
+            cas = nief_to_cluster
+        elif score == "p":
+            cas = p_to_cluster
+        
         for i in range(len(scores)):
-            scores[i] = ief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
-    elif score == "nief":
-        cluster_vols = get_cluster_vols(indptr, clusters)
-        for i in range(len(scores)):
-            scores[i] = nief_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
-    elif score == "p":
-        cluster_vols = get_cluster_vols(indptr, clusters)
-        for i in range(len(scores)):
-            scores[i] = p_to_cluster(indptr, indices, clusters, i, clusters[i], cluster_vols)
-
+            neighbors = indices[indptr[i]:indptr[i+1]]
+            adjacent_clusters = np.unique(clusters[neighbors])
+            cluster_scores = np.empty_like(adjacent_clusters, dtype="float64")
+            for j in range(len(adjacent_clusters)):
+                cluster_scores[j] = cas(indptr, indices, clusters, i, adjacent_clusters[j], cluster_vols)
+            scores[i] = np.max(cluster_scores)
+    
     elif score in ["oout", "cout"]:
         oout, cout = attatchment_scores(indptr, indices, edge_weights, clusters)
         if score == "oout":
@@ -288,6 +292,9 @@ def prune(g, clusters, thresh, score="cout", max_per_round=100, recursive=True, 
             pruned[index_map[argsort[scores[argsort] < thresh]]] = True  # TODO ew
         else:
             # nothing to prune
+            done = True
+
+        if np.sum(pruned) == n:
             done = True
     
         if not recursive:
