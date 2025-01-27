@@ -106,7 +106,7 @@ def ensemble_cas_edge_weights(G, cas_function=p_to_cluster, ens_size=16, combine
     return weights/ens_size
 
 
-def cluster_edges(G, edge_weights, min_weight=0.05, twocore=True, final="leiden", resolution=1.0):
+def cluster_edges(G, edge_weights, min_weight=0.05, twocore=True, final="leiden", resolution=1.0, n_aggregations=2):
     if min_weight > 0:
         edge_weights = (1-min_weight)*edge_weights + min_weight
     
@@ -120,9 +120,9 @@ def cluster_edges(G, edge_weights, min_weight=0.05, twocore=True, final="leiden"
             WG.data[WG.indptr[i]:WG.indptr[i+1]] = min_weight
 
     if final == "leiden":
-            method = sn.clustering.Leiden(resolution=resolution, shuffle_nodes=True)
+            method = sn.clustering.Leiden(resolution=resolution, shuffle_nodes=True, n_aggregations=n_aggregations)
     elif final == "louvain":
-            method = sn.clustering.Louvain(resolution=resolution, shuffle_nodes=True)
+            method = sn.clustering.Louvain(resolution=resolution, shuffle_nodes=True, n_aggregations=n_aggregations)
     else:
             raise ValueError(f"final expected one of leiden or louvain. Got {final}")
     return method.fit_predict(WG)
