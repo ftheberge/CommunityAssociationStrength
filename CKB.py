@@ -2,19 +2,30 @@ import numpy as np
 from numpy.typing import NDArray
 from collections import defaultdict
 
+random = np.random.default_rng(seed=42)
+
 # DBLP Params
 n = 317080
 nout = 56082
-
 x_min = 1
 x_max = 124
-beta_1 = 2.1
-
-c_min = 6
+beta_1 = 2.10
+c_min = 10
 c_max = 7556
-beta_2 = 2.28
+beta_2 = 1.88
+output_file = "dblp_cbk.dat"
 
-output_file = "dblp_cbk.txt"
+# Amazon Params
+# n = 334863
+# nout = 17669
+# x_min = 1
+# x_max = 116
+# beta_1 = 4.03 #1.70 when xmin=2
+# c_min = 10
+# c_max = 53551
+# beta_2 =  2.03
+# output_file = "amazon_cbk.dat"
+
 
 n = n-nout
 
@@ -34,7 +45,7 @@ def expected_value(events, probabilities):
 print("Making Number of Communities.")
 x_available = np.arange(x_min, x_max + 1, dtype=float)
 x_probabilities = powerlaw_distribution(x_available, beta_1)
-number_of_coms = np.random.choice(x_available, size=n, p=x_probabilities)
+number_of_coms = random.choice(x_available, size=n, p=x_probabilities)
 assert np.min(number_of_coms) >= x_min
 assert np.max(number_of_coms) <= x_max
 
@@ -45,7 +56,7 @@ m_available = np.arange(c_min, c_max+1, dtype=float)
 m_probabilities = powerlaw_distribution(m_available, beta_2)
 m_0 = expected_value(m_available, m_probabilities)
 num_coms = int(n*x_0/m_0)
-com_sizes = np.random.choice(m_available, size=num_coms, p=m_probabilities)
+com_sizes = random.choice(m_available, size=num_coms, p=m_probabilities)
 print(f"    Expected Coms per node: {x_0:.2f}, Expected Com sizs: {m_0:.2f}, Number of Coms: {num_coms}.")
 
 # Adjust community sizes to satisfy bipartite degree constaint
@@ -78,14 +89,14 @@ if required_adjustment != 0:
             com_options = np.arange(num_coms)[com_sizes > c_min]
             if len(com_options) == 0:
                 raise ValueError("Community sizes cannot be matched to constaints. Try again.")
-            random_com = np.random.choice(com_options, size=1)
+            random_com = random.choice(com_options, size=1)
             com_sizes[random_com] -= 1
             required_adjustment += 1
         else:
             com_options = np.arange(num_coms)[com_sizes < c_max]
             if len(com_options) == 0:
                 raise ValueError("Community sizes cannot be matched to constaints. Try again.")
-            random_com = np.random.choice(com_options, size=1)
+            random_com = random.choice(com_options, size=1)
             com_sizes[random_com] += 1
             required_adjustment -= 1
 
@@ -102,7 +113,7 @@ for i, num in enumerate(number_of_coms):
     end = int(start+num)
     node[start:end] = i
     start += int(num)
-np.random.shuffle(node)
+random.shuffle(node)
 
 com = np.empty(int(np.sum(com_sizes)), dtype="int64")
 start = 0
@@ -110,7 +121,7 @@ for i, num in enumerate(com_sizes):
     end = int(start+num)
     com[start:end] = i
     start += int(num)
-np.random.shuffle(com)
+random.shuffle(com)
 
 edges = np.vstack([node, com]).transpose()
 
@@ -149,7 +160,7 @@ recycle_ids = get_bad_edge_ids(edges)
 print(f"    Recycle {len(recycle_ids)} of {edges.shape[0]} edges.")
 while len(recycle_ids) > 0:
     for edge_id in recycle_ids:
-        other_id = np.random.choice(np.arange(edges.shape[0]), size=1)[0]
+        other_id = random.choice(np.arange(edges.shape[0]), size=1)[0]
         if edge_id == other_id:  # TODO fix random collision
             continue
         edges[edge_id, 1], edges[other_id, 1] = edges[other_id, 1], edges[edge_id, 1]
