@@ -26,6 +26,18 @@ output_file = "dblp_cbk.dat"
 # beta_2 =  2.03
 # output_file = "amazon_cbk.dat"
 
+# Youtube No-outliers Params
+n = 52675
+nout = 0
+x_min = 1
+x_max = 227
+t1 = 2.97
+c_min = 10
+c_max = 3001
+beta_2 = 2.13
+output_file = "youtube_cbk.dat"
+
+
 
 n = n-nout
 
