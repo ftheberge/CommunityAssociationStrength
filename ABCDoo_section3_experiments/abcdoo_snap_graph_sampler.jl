@@ -34,6 +34,22 @@ youtube_params = Dict(
     "ρ"     => 0.16,
 )
 
+# Youtube Graph - no outliers
+youtube_nooutliers_params = Dict(
+    "name" => "youtube_nooutliers",
+    "n" => 52675,
+    "nout" => 0,
+    "η" => 2.4528144280968203,
+    "d_min" => 5,
+    "d_max" => 1928,
+    "τ₁" => 1.8702187087097446,
+    "c_min" => 10,
+    "c_max" => 3001,
+    "τ₂" => 2.130965769664415,
+    "ξ" => 0.5928066048845747,
+    "ρ" => 0.3746343169285614,
+)
+
 # Amazon Graph vars
 amazon_params = Dict(
     "name"  => "amazon",
@@ -73,7 +89,7 @@ d_max_iter = 1000
 c_max_iter = 1000
 Random.seed!(seed)
 
-for params in [dblp_params, amazon_params, lj_params, youtube_params]
+for params in [youtube_nooutliers_params]
     for d in [2,5,10]
         @info "$(params["name"]), d=$d"
 
@@ -88,7 +104,7 @@ for params in [dblp_params, amazon_params, lj_params, youtube_params]
         c_max = params["c_max"]
         τ₂ = params["τ₂"]
         ξ = params["ξ"]
-        #ρ = params["ρ"]
+        ρ = params["ρ"]
 
 
         # in what follows n is number of non-outlier nodes
