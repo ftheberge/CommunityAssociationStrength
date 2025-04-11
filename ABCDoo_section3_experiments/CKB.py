@@ -2,20 +2,20 @@ import numpy as np
 from numpy.typing import NDArray
 from collections import defaultdict
 
-random = np.random.default_rng(seed=42)
+random = np.random.default_rng(seed=42) # For reproducibility
 
-# DBLP Params
-n = 317080
-nout = 56082
-x_min = 1
-x_max = 124
-beta_1 = 2.10
-c_min = 10
-c_max = 7556
-beta_2 = 1.88
-output_file = "dblp_cbk.dat"
+# # DBLP Params
+# n = 317080
+# nout = 56082
+# x_min = 1
+# x_max = 124
+# beta_1 = 2.10
+# c_min = 10
+# c_max = 7556
+# beta_2 = 1.88
+# output_file = "data/dblp_cbk.dat"
 
-# Amazon Params
+# # Amazon Params
 # n = 334863
 # nout = 17669
 # x_min = 1
@@ -24,18 +24,18 @@ output_file = "dblp_cbk.dat"
 # c_min = 10
 # c_max = 53551
 # beta_2 =  2.03
-# output_file = "amazon_cbk.dat"
+# output_file = "data/amazon_cbk.dat"
 
 # Youtube No-outliers Params
 n = 52675
 nout = 0
 x_min = 1
 x_max = 227
-t1 = 2.97
+beta_1 = 2.97
 c_min = 10
 c_max = 3001
 beta_2 = 2.13
-output_file = "youtube_cbk.dat"
+output_file = "data/youtube_cbk.dat"
 
 
 
@@ -199,21 +199,21 @@ assert np.max(com_sizes) <= c_max
 
 # Write results to a file
 print("Writing Results.")
-coms = [[] for _ in range(n)]
+node_coms = [[] for _ in range(n)]
 com_index_bump = 1
 if nout > 0:
     com_index_bump = 2  # reserve community 1 for outliers
 for i in range(edges.shape[0]):
-    coms[edges[i, 0]].append(edges[i, 1] + com_index_bump) # Reindex coms to 1 for consistency with julia
+    node_coms[edges[i, 0]].append(edges[i, 1] + com_index_bump) # Reindex coms to 1 for consistency with julia
 
 with open(output_file, "w") as f:
-    for i, c in enumerate(coms):
+    for i, c in enumerate(node_coms):
         f.write(f"{i+1}\t{c}\n")  # Reindex nodes to 1 for consistency with julia
 
     if nout > 0:
-        next_id = len(coms)+1
+        next_id = len(node_coms)+1
         for i in range(nout):
-            f.write(f"{i}\t[1]\n")
+            f.write(f"{+next_id+i}\t[1]\n")
             i += 1
 
 print("Success!")
