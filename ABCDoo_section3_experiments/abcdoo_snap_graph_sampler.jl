@@ -2,52 +2,28 @@ using Pkg
 using ABCDGraphGenerator
 using Random
 
-# LiveJournal graph vars
-lj_params = Dict(
-    "name"  => "lj",
-    "n"     => 3997962,
-    "nout"  => 2850014,
-    "η"     => 6.24,
-    "d_min" => 5,
-    "d_max" => 14815,
-    "τ₁"    => 1.74,
-    "c_min" => 10,
-    "c_max" => 178899,
-    "τ₂"    => 1.88,
-    "ξ"     => 0.71,
-    "ρ"     => 0.43,
-)
 
-# Youtube Graph vars
-youtube_params = Dict(
-    "name"  => "youtube",
-    "n"     => 1134890,
-    "nout"  => 1082215,
-    "η"     => 2.45,
-    "d_min" => 5,
-    "d_max" => 28754,
-    "τ₁"    => 2.09,       
-    "c_min" => 10,
-    "c_max" => 3001,
-    "τ₂"    => 2.13,
-    "ξ"     => 0.96,
-    "ρ"     => 0.16,
-)
+# Universal params
+seed = 42
+d_max_iter = 1000
+c_max_iter = 1000
+Random.seed!(seed)
+
 
 # Youtube Graph - no outliers
-youtube_nooutliers_params = Dict(
-    "name" => "youtube_nooutliers",
+youtube_params = Dict(
+    "name" => "youtube",
     "n" => 52675,
     "nout" => 0,
-    "η" => 2.4528144280968203,
+    "η" => 2.45,
     "d_min" => 5,
     "d_max" => 1928,
-    "τ₁" => 1.8702187087097446,
+    "τ₁" => 1.87,
     "c_min" => 10,
     "c_max" => 3001,
-    "τ₂" => 2.130965769664415,
-    "ξ" => 0.5928066048845747,
-    "ρ" => 0.3746343169285614,
+    "τ₂" => 2.13,
+    "ξ" => 0.59,
+    "ρ" => 0.37,
 )
 
 # Amazon Graph vars
@@ -83,13 +59,7 @@ dblp_params = Dict(
 )
 
 
-# Universal params
-seed = 42
-d_max_iter = 1000
-c_max_iter = 1000
-Random.seed!(seed)
-
-for params in [youtube_nooutliers_params]
+for params in [youtube_params, dblp_params, amazon_params]
     for d in [2,5,10]
         @info "$(params["name"]), d=$d"
 
@@ -106,37 +76,25 @@ for params in [youtube_nooutliers_params]
         ξ = params["ξ"]
         ρ = params["ρ"]
 
-
-        # in what follows n is number of non-outlier nodes
-        n = n - nout
-
-        # Actually Generate the graph
         #@info "Expected value of degree: $(ABCDGraphGenerator.get_ev(τ₁, d_min, d_max))"
         degs = ABCDGraphGenerator.sample_degrees(τ₁, d_min, d_max, n + nout, d_max_iter)
-        #open(io -> foreach(d -> println(io, d), degs), "deg.dat", "w")
-        @assert iseven(sum(degs))
-
 
         #@info "Expected value of community size: $(ABCDGraphGenerator.get_ev(τ₂, c_min, c_max))"
-        coms = ABCDGraphGenerator.sample_communities(τ₂, ceil(Int, c_min / η), floor(Int, c_max / η), n, c_max_iter)
-        @assert sum(coms) == n
+        coms = ABCDGraphGenerator.sample_communities(τ₂, ceil(Int, c_min / η), floor(Int, c_max / η), n-nout, c_max_iter)
         pushfirst!(coms, nout)
 
-        @info "    Done degs and coms, generating graph."
+        #@info "Done degs and coms, generating graph."
         p = ABCDGraphGenerator.ABCDParams(degs, coms, ξ, η, d, ρ)
         edges, clusters = ABCDGraphGenerator.gen_graph(p)
-        open("abcdoo_$(name)_d$(d)_edge.dat", "w") do io
-        #open("abcdoo_$(name)_d$(d)_nocorr_edge.dat", "w") do io
+        open("data/abcdoo_$(name)_d$(d)_edge.dat", "w") do io
            for (a, b) in sort!(collect(edges))
                println(io, a, "\t", b)
            end
         end
-        open("abcdoo_$(name)_d$(d)_com.dat", "w") do io
-        #open("abcdoo_$(name)_d$(d)_nocorr_com.dat", "w") do io
+        open("data/abcdoo_$(name)_d$(d)_com.dat", "w") do io
             for (i, c) in enumerate(clusters)
                 println(io, i, "\t", c)
             end
         end
-
     end
 end
