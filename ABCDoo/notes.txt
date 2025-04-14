@@ -1,0 +1,9 @@
+------------- updating and running Julia -----------------
+git fetch origin
+git merge origin/bk/overlapping_communities
+
+using Pkg
+Pkg.add(PackageSpec(url="https://github.com/bkamins/ABCDGraphGenerator.jl", rev="bk/overlapping_communities"))
+exit()
+
+(base) fcthebe@dev02b:~/ABCD/ABCDGraphGenerator.jl/utils$ ~/julia-1.7.2/bin/julia ./abcdoo_snap_graph_sampler.jl 
